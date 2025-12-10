@@ -1,0 +1,83 @@
+# ---------------------------
+# Node.js
+# ---------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+
+# ---------------------------
+# Environment / Secrets
+# ---------------------------
+.env
+.env.*
+!.env.example
+
+# ---------------------------
+# Baileys WhatsApp session
+# ---------------------------
+auth_info/
+auth_info/*
+auth_info_session/
+creds.json
+
+# ---------------------------
+# Logs
+# ---------------------------
+logs/
+*.log
+log.txt
+
+# PM2 logs (if you use pm2 locally)
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# ---------------------------
+# VS Code
+# ---------------------------
+.vscode/
+.history/
+*.code-workspace
+
+# ---------------------------
+# OS generated
+# ---------------------------
+.DS_Store
+Thumbs.db
+
+# ---------------------------
+# Build artifacts / transpiled code
+# ---------------------------
+dist/
+build/
+out/
+.cache/
+
+# ---------------------------
+# Docker
+# ---------------------------
+*.tar
+docker-compose.override.yml
+
+# Ignore docker context junk
+**/Dockerfile~
+**/Dockerfile.temp
+**/docker-compose.yml~
+**/__pycache__/
+
+# ---------------------------
+# Azure deployment artifacts
+# ---------------------------
+azure-pipelines.yml
+*.azureconfig
+*.acrconfig
+
+# ---------------------------
+# Local dev only
+# ---------------------------
+temp/
+tmp/

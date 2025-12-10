@@ -3,6 +3,8 @@
 // -------------------------------
 import makeWASocket, { useMultiFileAuthState, downloadMediaMessage } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
+import dotenv from 'dotenv';
+dotenv.config();
 import { QueueClient } from "@azure/storage-queue";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { randomUUID } from "crypto";
@@ -91,6 +93,9 @@ async function startWhatsApp() {
     });
 
     // INCOMING MESSAGES
+   // -------------------------------
+// INCOMING MESSAGES
+// -------------------------------
     sock.ev.on("messages.upsert", async ({ messages }) => {
         const msg = messages[0];
         if (!msg.message) return;
@@ -120,6 +125,14 @@ async function startWhatsApp() {
             null;
 
         if (caption) payload.text = caption;
+
+        // ⬇⬇⬇  ADD: PING → PONG  ⬇⬇⬇
+        if (payload.text && payload.text.trim().toLowerCase() === "ping") {
+            await sock.sendMessage(chatId, { text: "pong" });
+            console.log("🏓 Responded to ping with pong");
+        }
+        // ⬆⬆⬆  END: PING HANDLER  ⬆⬆⬆
+
 
         // MEDIA
         if (
@@ -160,7 +173,7 @@ async function startWhatsApp() {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get("/", (req, res) => res.send("WhatsApp Bot is running."));
+app.get("/", (req, res) => res.send("WhatsApp Bot is running Hello!!."));
 app.listen(PORT, () => console.log("🌐 HTTP server running on port", PORT));
 
 

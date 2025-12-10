@@ -15,17 +15,24 @@ import express from "express";
 // ENV VARIABLES
 // -------------------------------
 const AZURE_STORAGE_CONNECTION = process.env.AZURE_STORAGE_CONNECTION;
-const QUEUE_NAME = process.env.QUEUE_NAME || "incoming-messages";
+
+// incoming queue (от WhatsApp → Azure)
+const INCOMING_QUEUE_NAME = process.env.QUEUE_NAME || "incoming-messages";
+
+// outgoing queue (от Azure → WhatsApp)
+const OUTGOING_QUEUE_NAME = process.env.OUTGOING_QUEUE || "outgoing-messages";
+
 const BLOB_CONTAINER_NAME = process.env.BLOB_CONTAINER || "whatsapp-media";
 
 if (!AZURE_STORAGE_CONNECTION) throw new Error("❌ Missing AZURE_STORAGE_CONNECTION");
-if (!QUEUE_NAME) throw new Error("❌ Missing QUEUE_NAME");
 
 
 // -------------------------------
-// INIT QUEUE + BLOB
+// INIT QUEUES + BLOB
 // -------------------------------
-const queueClient = new QueueClient(AZURE_STORAGE_CONNECTION, QUEUE_NAME);
+const incomingQueue = new QueueClient(AZURE_STORAGE_CONNECTION, INCOMING_QUEUE_NAME);
+const outgoingQueue = new QueueClient(AZURE_STORAGE_CONNECTION, OUTGOING_QUEUE_NAME);
+
 const blobService = BlobServiceClient.fromConnectionString(AZURE_STORAGE_CONNECTION);
 const container = blobService.getContainerClient(BLOB_CONTAINER_NAME);
 
@@ -33,11 +40,12 @@ const container = blobService.getContainerClient(BLOB_CONTAINER_NAME);
 async function initAzure() {
     console.log("🔄 Initializing Azure resources...");
 
-    // Создаём queue если нет
-    await queueClient.createIfNotExists();
-    console.log("📨 Queue ready:", QUEUE_NAME);
+    await incomingQueue.createIfNotExists();
+    console.log("📨 Incoming queue ready:", INCOMING_QUEUE_NAME);
 
-    // Создаём blob container если нет
+    await outgoingQueue.createIfNotExists();
+    console.log("📤 Outgoing queue ready:", OUTGOING_QUEUE_NAME);
+
     await container.createIfNotExists();
     console.log("🗂 Blob container ready:", BLOB_CONTAINER_NAME);
 }
@@ -57,12 +65,60 @@ async function uploadToBlob(buffer, mime) {
 
 
 // -------------------------------
-// SEND MESSAGE TO QUEUE
+// SEND MESSAGE TO INCOMING QUEUE
 // -------------------------------
-async function sendToQueue(payload) {
+async function sendIncoming(payload) {
     const msg = Buffer.from(JSON.stringify(payload)).toString("base64");
-    await queueClient.sendMessage(msg);
-    console.log("📤 → Azure Queue:", payload);
+    await incomingQueue.sendMessage(msg);
+    console.log("📥 → Incoming queue:", payload);
+}
+
+
+// -------------------------------
+// LISTEN TO OUTGOING-MESSAGES QUEUE (POLLING)
+// -------------------------------
+async function startOutgoingQueueListener(sock) {
+    console.log("▶ Starting outgoing queue listener...");
+
+    while (true) {
+        try {
+            const response = await outgoingQueue.receiveMessages({ numberOfMessages: 1 });
+
+            if (!response.receivedMessageItems.length) {
+                await new Promise(r => setTimeout(r, 1000)); // poll every 1 sec
+                continue;
+            }
+
+            const msg = response.receivedMessageItems[0];
+            const payload = JSON.parse(msg.messageText);
+
+            console.log("📤 Outgoing message received:", payload);
+
+            // --- Send to WhatsApp ---
+            if (payload.type === "text") {
+                await sock.sendMessage(payload.chatId, { text: payload.text });
+            }
+
+            if (payload.type === "media" && payload.mediaUrl) {
+                const res = await fetch(payload.mediaUrl);
+                const buffer = Buffer.from(await res.arrayBuffer());
+
+                await sock.sendMessage(payload.chatId, {
+                    [payload.mime.startsWith("image") ? "image" : "document"]: buffer,
+                    mimetype: payload.mime,
+                    caption: payload.text || null
+                });
+            }
+
+            // delete message from queue
+            await outgoingQueue.deleteMessage(msg.messageId, msg.popReceipt);
+            console.log("✅ Outgoing message sent + deleted from queue");
+
+        } catch (err) {
+            console.error("❌ Outgoing queue error:", err);
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
 }
 
 
@@ -89,13 +145,18 @@ async function startWhatsApp() {
         }
         if (connection === "open") {
             console.log("✅ WhatsApp connected.");
+            
+            // -------------------------------
+            // START OUTGOING POLLING LOOP
+            // -------------------------------
+            startOutgoingQueueListener(sock);
         }
     });
 
-    // INCOMING MESSAGES
-   // -------------------------------
-// INCOMING MESSAGES
-// -------------------------------
+
+    // -------------------------------
+    // INCOMING WHATSAPP → INCOMING QUEUE
+    // -------------------------------
     sock.ev.on("messages.upsert", async ({ messages }) => {
         const msg = messages[0];
         if (!msg.message) return;
@@ -110,10 +171,11 @@ async function startWhatsApp() {
             type: "text",
             text: null,
             mediaUrl: null,
-            mime: null
+            mime: null,
+            fromMe: msg.key.fromMe || false
         };
 
-        // TEXT MESSAGES
+        // TEXT
         if (msg.message.conversation) payload.text = msg.message.conversation;
         if (msg.message.extendedTextMessage?.text) payload.text = msg.message.extendedTextMessage.text;
 
@@ -126,14 +188,6 @@ async function startWhatsApp() {
 
         if (caption) payload.text = caption;
 
-        // ⬇⬇⬇  ADD: PING → PONG  ⬇⬇⬇
-        if (payload.text && payload.text.trim().toLowerCase() === "ping") {
-            await sock.sendMessage(chatId, { text: "pong" });
-            console.log("🏓 Responded to ping with pong");
-        }
-        // ⬆⬆⬆  END: PING HANDLER  ⬆⬆⬆
-
-
         // MEDIA
         if (
             msg.message.imageMessage ||
@@ -145,8 +199,7 @@ async function startWhatsApp() {
             const mime =
                 msg.message.imageMessage?.mimetype ||
                 msg.message.videoMessage?.mimetype ||
-                msg.message.documentMessage?.mimetype ||
-                "application/octet-stream";
+                msg.message.documentMessage?.mimetype;
 
             payload.mime = mime;
 
@@ -161,21 +214,22 @@ async function startWhatsApp() {
             }
         }
 
-        // SEND TO QUEUE
-        await sendToQueue(payload);
+        // SEND TO INCOMING QUEUE
+        await sendIncoming(payload);
     });
+
+
 }
 
 
 // -------------------------------
-// EXPRESS HEALTH SERVER (REQUIRED FOR AZURE)
+// EXPRESS HEALTH SERVER
 // -------------------------------
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get("/", (req, res) => res.send("WhatsApp Bot is running Hello!! Zalupa2."));
+app.get("/", (req, res) => res.send("WhatsApp Bot is running."));
 app.listen(PORT, () => console.log("🌐 HTTP server running on port", PORT));
-
 
 
 // -------------------------------

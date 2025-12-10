@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 
-namespace Zenda.Function;
+namespace Zenda.Functions;
 
 public class HttpTrigger1
 {

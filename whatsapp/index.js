@@ -173,8 +173,9 @@ async function startWhatsApp() {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get("/", (req, res) => res.send("WhatsApp Bot is running Hello!!."));
+app.get("/", (req, res) => res.send("WhatsApp Bot is running Hello!! Zalupa2."));
 app.listen(PORT, () => console.log("🌐 HTTP server running on port", PORT));
+
 
 
 // -------------------------------

@@ -39,7 +39,7 @@ pids
 # ---------------------------
 # VS Code
 # ---------------------------
-.vscode/
+
 .history/
 *.code-workspace
 
